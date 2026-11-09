@@ -1,0 +1,60 @@
+zabbix_export:
+  version: '7.4'
+  templates:
+    - uuid: 0f6bb2a1e5b04f5c9d3e6f0b1a2c3d4e
+      template: 'Test relay'
+      name: 'Test relay'
+      items:
+        - uuid: 1f6bb2a1e5b04f5c9d3e6f0b1a2c3d4e
+          name: 'Battery voltage {HOST.NAME}'
+          type: SNMP_AGENT
+          snmp_oid: .1.3.6.1.4.1.26381.1.1.1.1.4
+          key: bat1.v.ups
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            - type: MULTIPLIER
+              parameters:
+                - '0.1'
+          triggers:
+            - uuid: 2f6bb2a1e5b04f5c9d3e6f0b1a2c3d4e
+              expression: 'last(/Test relay/bat1.v.ups)<20.5'
+              name: 'Low voltage on {HOST.NAME} {HOST.IP}'
+              priority: HIGH
+        - uuid: 3f6bb2a1e5b04f5c9d3e6f0b1a2c3d4e
+          name: 'Gate version'
+          type: SNMP_AGENT
+          snmp_oid: 'NET-SNMP-EXTEND-MIB::nsExtendOutputFull."gate_version"'
+          key: gate.version
+          delay: 1d
+          value_type: TEXT
+          valuemap:
+            name: onoff
+        - uuid: 4f6bb2a1e5b04f5c9d3e6f0b1a2c3d4e
+          name: Ping
+          type: SIMPLE
+          key: icmpping
+        - uuid: 5f6bb2a1e5b04f5c9d3e6f0b1a2c3d4e
+          name: SSH thing
+          type: SSH
+          key: 'ssh.run[x]'
+      discovery_rules:
+        - uuid: 6f6bb2a1e5b04f5c9d3e6f0b1a2c3d4e
+          name: Network
+          type: SNMP_AGENT
+          key: net.if
+          item_prototypes: []
+      valuemaps:
+        - uuid: 7f6bb2a1e5b04f5c9d3e6f0b1a2c3d4e
+          name: onoff
+          mappings:
+            - value: '0'
+              newvalue: 'off'
+  triggers:
+    - uuid: 8f6bb2a1e5b04f5c9d3e6f0b1a2c3d4e
+      expression: 'last(/Test relay/bat1.v.ups)<14 and avg(/Test relay/icmpping,10m)=0'
+      name: 'Battery dead and no ping'
+      priority: DISASTER
+    - uuid: 9f6bb2a1e5b04f5c9d3e6f0b1a2c3d4e
+      expression: 'last(/Test relay/ssh.run[x])="bad"'
+      name: 'SSH says bad'

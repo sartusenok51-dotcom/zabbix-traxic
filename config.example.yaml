@@ -1,0 +1,130 @@
+# Скопируйте в config.yaml и поправьте. ${VAR} подставляется из переменных окружения.
+
+traxic:
+  source: graphql                     # graphql | csv | json | http
+  url: https://traxic.example.local/graphql
+  headers:
+    Authorization: "Bearer ${TRAXIC_TOKEN}"
+  verify_ssl: true
+
+  # Схема у Traxic своя — посмотрите её:  python -m zbx_traxic introspect
+  # Этот запрос (все устройства) нужен для сверки (report).
+  query: |
+    query Devices($limit: Int!, $offset: Int!) {
+      devices(limit: $limit, offset: $offset) {
+        id name ip
+        type { name }
+        object { number }
+        zabbixTemplate
+      }
+    }
+  items_path: data.devices
+  pagination:
+    mode: offset                      # none | offset | cursor
+    limit: 500
+    limit_var: limit
+    offset_var: offset
+
+  # Пути к полям устройства (через точку; списки: tags.0.name или tags.name)
+  fields:
+    id: id
+    name: name
+    ip: ip
+    type: type.name
+    site: object.number               # номер объекта = имя узла (микротика)
+    template: zabbixTemplate          # шаблон Zabbix из Traxic (если есть)
+
+zabbix:
+  url: https://zabbix.example.local/api_jsonrpc.php
+  token: ${ZABBIX_TOKEN}              # или user/password
+  verify_ssl: true
+
+mikrotik:
+  host_regex: '^\d{4}$'               # узлы — хосты с именем из 4 цифр
+  assign_by: [site, subnet]           # для отчёта: как привязывать устройство к узлу
+  site_regex: '(\d{4})'               # как вытащить номер узла из поля site
+  subnet_prefix: 24
+  self_type: mikrotik                 # тип самих микротиков в Traxic — их в LLD не берём
+
+template:
+  name: Traxic Node
+  group: Templates/Traxic
+  base_templates: ["Mikrotik LTAP"]   # мегашаблон включает базовый шаблон узла (linked)
+
+  # Запрос из шаблона: устройства ОДНОГО объекта. $node = {HOST.HOST} узла.
+  # Если Traxic не умеет фильтровать по объекту — не задавайте traxic_query,
+  # тогда шаблон возьмёт query и отфильтрует по fields.site сам (дольше).
+  traxic_query: |
+    query NodeDevices($node: String!) {
+      devices(objectNumber: $node) {
+        id name ip
+        type { name }
+        object { number }
+        zabbixTemplate
+      }
+    }
+  traxic_items_path: data.devices
+  traxic_pagination: {mode: none}
+  node_var: node
+  node_as_int: false                  # true, если в схеме $node: Int
+  auth_header: Authorization
+  auth_prefix: Bearer                 # токен — в макросе {$TRAXIC.TOKEN} (секретный)
+  traxic_url_from_server: ""          # URL Traxic с точки зрения Zabbix-сервера/прокси (пусто = traxic.url)
+
+  discovery_interval: 1h
+  lost_resources_period: 7d
+  ping_count: 3
+  ping_interval: 1m
+  tcp_interval: 2m
+  default_severity: AVERAGE
+  loss_warn: 20                       # %
+  rtt_warn: 0.3                       # секунды
+  external_script: traxic_poll.py     # externalscripts/traxic_poll.py на сервере и прокси
+
+# Типы устройств. Ключ — короткое имя, он же {#TYPE}.
+#   match           — как распознать тип (шаблон из Traxic / тип из Traxic / имя)
+#   source_templates — старые шаблоны типа: их SNMP-item'ы и триггеры переносятся в мегашаблон
+#   snmp            — как опрашивать (версия, community); items можно дописать руками
+#   tcp / http      — доп. проверки по {#IP}
+#   severity        — важность «Нет связи»
+types:
+  mikrotik:
+    title: MikroTik
+    match:
+      traxic_types: ["MikroTik", "Маршрутизатор"]
+      templates: ["Mikrotik LTAP"]
+
+  erelay:
+    title: Е-реле
+    severity: HIGH
+    source_templates: ["IP-relay UPS"]
+    # source_files: [{file: exports/ip-relay.yaml, template: "IP-relay UPS"}]   # без API
+    snmp: {version: 2, community: "{$SNMP_COMMUNITY}", port: 161, timeout: 10s}
+    match:
+      traxic_types: ["Е-реле", "E-relay", "ИБП"]
+      templates: ["IP-relay UPS"]
+
+  pc:
+    title: Комп (шлюз)
+    severity: HIGH
+    source_templates: ["Gateway_STR"]
+    snmp: {version: 2, community: "{$SNMP_COMMUNITY}", port: 161, timeout: 15s}
+    match:
+      traxic_types: ["ПК", "Компьютер", "Шлюз"]
+      templates: ["Gateway_STR"]
+
+  camera:
+    title: Камера
+    severity: AVERAGE
+    tcp: [80, 554]
+    http:
+      - name: web
+        title: Веб-интерфейс
+        url: "http://{#IP}/"
+        ok_codes: [200, 401]
+    match:
+      traxic_types: ["Камера", "IP-камера"]
+      name_regex: 'cam|камер'
+
+  other:
+    title: Прочее
